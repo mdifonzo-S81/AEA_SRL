@@ -1,0 +1,1453 @@
+TAG MODIFICATI
+
+- 2.1.1.8 - ScontoMaggiorazione
+- 2.1.1.8.2 - Percentuale
+- 2.2.1.16 - AltriDatiGestionali
+- 2.1 - DatiGenerali
+
+
+*************************************************************************************************************
+*************************************************************************************************************
+2.1 - DatiGenerali
+*************************************************************************************************************
+*************************************************************************************************************
+
+SET NOCOUNT ON
+
+DECLARE @CODIVAEFF_RIGA_DESCRITTIVA VARCHAR(4)
+DECLARE @INDCALCIMP                 INT
+
+
+    -- Codice iva effettivo per le righe descrittive
+    SELECT TOP 1 
+        @CODIVAEFF_RIGA_DESCRITTIVA = DO74_ALIQIVA1_CG28
+    FROM 
+        DO74_DOCCASTELLETTOIVA WITH (NOLOCK)
+    WHERE 
+        DO74_DITTA_CG18 = <<CODICEDITTA>>
+        AND DO74_NUMREG_CO99 = '<<NUMREG>>'
+    ORDER BY 
+        DO74_TIPOLOGIA
+
+
+-- Indicatore calcolo importo
+SELECT
+    @INDCALCIMP =
+    CASE
+        WHEN MG3G_INDCALCIMP <> 99 THEN MG3G_INDCALCIMP
+        ELSE
+        CASE
+            WHEN MG36_INDCALCIMP <> 99 THEN MG36_INDCALCIMP
+            ELSE MG3A_INDCALCIMP
+        END
+    END
+FROM
+    MG3G_DOCDITTA AS PDI WITH (NOLOCK)
+    INNER JOIN
+    MG36_DOCUMENTI AS PDO WITH (NOLOCK)
+    ON
+    MG3G_CODDOCUM_MG36 = MG36_CODDOCUM
+    AND MG3G_INDSTAPER_MG36 = MG36_INDSTAPER
+    INNER JOIN
+    MG3A_DOCPARGEN
+    ON
+    MG3G_DITTA_CG18 = MG3A_DITTA_CG18
+    INNER JOIN
+    <<TABELLA_BODY>>
+    ON
+    IDFILE = <<IDFILE>>
+    AND MG3G_CODDOCUM_MG36 = DO11_DOCUM_MG36
+WHERE
+    MG3G_DITTA_CG18 = <<CODICEDITTA>>
+
+IF OBJECT_ID('TEMPDB.DBO.#TABELLA_RIGHE') IS NOT NULL DROP TABLE #TABELLA_RIGHE
+
+SELECT ROW_NUMBER() OVER (
+        ORDER BY RIGHEADD_ORDER
+            ,DO30_PROGVISUASTA
+            ,RIGHEADD_PROG
+        ) AS NUMEROLINEA
+    , DO30_DITTA_CG18
+    , DO30_NUMREG_CO99
+    ,(
+        CASE 
+            WHEN RIGHEADD_FLG = 1
+                AND RIGHEADD_TIPORIGA <> 'SC'
+                THEN 0
+            ELSE DO30_PROGRIGA
+            END
+    ) AS DO30_PROGRIGA_CALCOLATO
+    , DO30_INDTIPORIGA
+    , CASE WHEN @INDCALCIMP = 1 AND ISNULL(DO30_PREZZO2, 0) <> 0 AND ISNULL(DO30_QTA2, 0) <> 0 THEN DO30_QTA2 ELSE DO30_QTA1 END AS DO30_QTA1
+    , DO30_DESCART
+    , DO30_INDTIPOOMAG
+    , CASE WHEN @INDCALCIMP = 1 AND ISNULL(DO30_PREZZO2, 0) <> 0 AND ISNULL(DO30_QTA2, 0) <> 0 THEN DO30_UM2 WHEN @INDCALCIMP = 2 THEN '' ELSE DO30_UM1 END AS DO30_UM1
+    , DO30_CODSPESA_MG04
+    , (CASE WHEN SPESEPROP_FLG = 0 THEN DO30_PREZZO1_DIVPREZZO  ELSE SPESEPROP_PREZZOUNITARIO                           END)    AS DO30_PREZZO1_DIVPREZZO
+    , (CASE WHEN SPESEPROP_FLG = 0 THEN DO30_IMPORTO            ELSE SPESEPROP_IMPONIBILE                               END)    AS DO30_IMPORTO
+    , (CASE WHEN SPESEPROP_FLG = 0 THEN DO30_IMPORTO_VAL        ELSE SPESEPROP_IMPONIBILE_VAL                           END)    AS DO30_IMPORTO_VAL
+    , (CASE WHEN SPESEPROP_FLG = 0 THEN DO30_IMPORTOIVA         ELSE (SPESEPROP_IMPONIBILE + SPESEPROP_IMPOSTA)         END)    AS DO30_IMPORTOIVA
+    , (CASE WHEN SPESEPROP_FLG = 0 THEN DO30_IMPORTOIVA_VAL     ELSE (SPESEPROP_IMPONIBILE_VAL + SPESEPROP_IMPOSTA_VAL) END)    AS DO30_IMPORTOIVA_VAL
+    , (CASE WHEN SPESEPROP_FLG = 0 THEN DO30_IMPNETSCP          ELSE SPESEPROP_IMPONIBILE                               END)    AS DO30_IMPNETSCP
+    ,(
+        CASE 
+            WHEN DO30_INDTIPORIGA IN (2, 6, 8)
+                THEN @CODIVAEFF_RIGA_DESCRITTIVA
+            WHEN DO30_INDTIPORIGA = 4
+                THEN 
+                    (CASE 
+                        WHEN SPESEPROP_CODIVA <> '' THEN SPESEPROP_CODIVA 
+                        ELSE DO30_ALIVAEFF_CG28 
+                    END)
+            ELSE DO30_ALIVAEFF_CG28
+            END
+        ) AS DO30_ALIVAEFF_CG28_CALCOLATA        
+    , DO30_FLGRITACC
+    , RIGHEADD_FLG
+    , RIGHEADD_ORDER
+    , RIGHEADD_MOTIVO
+    , RIGHEADD_TIPORIGA
+    , RIGHEADD_PREZZOTOTALE
+    , RIGHEADD_ALIQUOTAIVA
+    , RIGHEADD_CODICEIVA
+    , RIGHEADD_TIPOLOGIAIVA
+    , RIGHEADD_DESCRIZIONE
+    , RIGHEADD_QTA
+    , RIGHEADD_PREZZOUNITARIO
+    , PERCIVA
+    , TIPOLOGIAIVA
+    , VALUTA
+    , CAMBIO
+INTO #TABELLA_RIGHE
+FROM (
+
+-- RIGA DESCRITTIVA COINTESTATARI
+    SELECT DO11_DITTA_CG18 AS RIGHEADD_DITTA
+        ,DO11_NUMREG_CO99 AS RIGHEADD_NUMREG
+        ,-1 AS RIGHEADD_ORDER
+        ,1 AS RIGHEADD_FLG
+        ,'' AS RIGHEADD_TIPORIGA
+        ,'Cointestatario: ' + CG16_RAGSOANAG + ' - ' + CG16_INDIRIZZO + ' - ' + RTRIM(CG16_CAP) + ' - ' + CG16_CITTA + ' ' + CG16_PROV + ' - ' + CG16_CODFISCALE AS RIGHEADD_DESCRIZIONE
+        ,CAST(0 AS DECIMAL(14, 3)) AS RIGHEADD_QTA
+        ,CAST(0 AS DECIMAL(17, 6)) AS RIGHEADD_PREZZOUNITARIO
+        ,CAST(0 AS DECIMAL(15, 2)) AS RIGHEADD_PREZZOTOTALE
+        , ISNULL(CG28_CODICE, '')   AS RIGHEADD_CODICEIVA
+        , ISNULL(CG28_PERCIVA, 0)   AS RIGHEADD_ALIQUOTAIVA
+        , ISNULL(CG28_TIPOLOGIA, 0) AS RIGHEADD_TIPOLOGIAIVA
+        , 'COINTESTATARIO' AS RIGHEADD_MOTIVO
+        , ROW_NUMBER() OVER(ORDER BY DO11_DITTA_CG18) AS RIGHEADD_PROG
+        , DO30_DOCCORPO.*
+        , CAST(0 AS DECIMAL(5,2)) AS PERCIVA
+        , CAST(0 AS DECIMAL(2,0)) AS TIPOLOGIAIVA
+        , CAST('' AS VARCHAR(40)) AS ANNOTAZIONIVA
+        , CAST(0 AS DECIMAL(17,6)) AS DO30_PREZZO1_DIVPREZZO
+        , CAST('EURO' AS CHAR(4)) AS VALUTA
+        , CAST(1 AS DECIMAL(12,6)) AS CAMBIO
+        , 0     AS SPESEPROP_FLG
+        , CAST('' AS CHAR(4))   AS SPESEPROP_CODIVA
+        , CAST(0 AS DECIMAL(13,2)) AS SPESEPROP_PREZZOUNITARIO
+        , CAST(0 AS DECIMAL(13,2)) AS SPESEPROP_IMPONIBILE
+        , CAST(0 AS DECIMAL(13,2)) AS SPESEPROP_IMPONIBILE_VAL
+        , CAST(0 AS DECIMAL(13,2)) AS SPESEPROP_IMPOSTA
+        , CAST(0 AS DECIMAL(13,2)) AS SPESEPROP_IMPOSTA_VAL
+    FROM DO30_DOCCORPO WITH (NOLOCK)
+    INNER JOIN DO11_DOCTESTATA WITH (NOLOCK) ON DO11_DITTA_CG18 = DO30_DITTA_CG18
+        AND DO11_NUMREG_CO99 = DO30_NUMREG_CO99
+    LEFT JOIN CG28_TABCODIVA WITH (NOLOCK) ON
+        CG28_CODICE = @CODIVAEFF_RIGA_DESCRITTIVA   
+    INNER JOIN CG44_CLIFOR WITH(NOLOCK)
+        ON DO11_DITTA_CG18 = CG44_DITTA_CG18
+        AND DO11_TIPOCF_CG44 = CG44_TIPOCF
+        AND DO11_CLIFOR_CG44 = CG44_CLIFOR
+    INNER JOIN CG4E_CFCOINTESTATI WITH (NOLOCK) ON
+       CG4E_DITTA_CG18 = DO11_DITTA_CG18
+        AND CG4E_TIPOCF_CG44 = DO11_TIPOCF_CG44
+        AND CG4E_CLIFOR_CG44 = DO11_CLIFOR_CG44
+    INNER JOIN VCG16_CG44_ALLADATA WITH (NOLOCK) ON
+        VCG16_44_CF_DITTA = DO11_DITTA_CG18 
+        AND VCG16_44_CF_TIPOCF = DO11_TIPOCF_CG44 
+        AND VCG16_44_CF_CLIFOR = CG4E_CLIFORCO_CG44 
+        AND DO11_DATADOC BETWEEN DATAINIZIOVALIDITA AND DATAFINEVALIDITA
+    WHERE DO11_DITTA_CG18 = <<CODICEDITTA>>
+        AND DO11_NUMREG_CO99 = '<<NUMREG>>'
+        AND DO30_INDTIPORIGA = 0
+        AND CG44_FLGCOINTESTATI = 1
+
+UNION
+
+    SELECT DO11_DITTA_CG18 AS RIGHEADD_DITTA
+        ,DO11_NUMREG_CO99 AS RIGHEADD_NUMREG
+        ,0 AS RIGHEADD_ORDER
+        ,0 AS RIGHEADD_FLG
+        ,'' AS RIGHEADD_TIPORIGA
+        ,'' AS RIGHEADD_DESCRIZIONE
+        ,CAST(0 AS DECIMAL(14, 3)) AS RIGHEADD_QTA
+        ,CAST(0 AS DECIMAL(17, 6)) AS RIGHEADD_PREZZOUNITARIO
+        ,CAST(0 AS DECIMAL(15, 2)) AS RIGHEADD_PREZZOTOTALE
+        ,'' AS RIGHEADD_CODICEIVA
+        ,0 AS RIGHEADD_ALIQUOTAIVA
+        ,0 AS RIGHEADD_TIPOLOGIAIVA
+        ,'' AS RIGHEADD_MOTIVO
+        ,0 AS RIGHEADD_PROG
+        ,DO30_DOCCORPO.*
+        ,CG28_PERCIVA AS PERCIVA
+        ,CG28_TIPOLOGIA AS TIPOLOGIAIVA
+        ,CG28_ANNOTAZIONI AS ANNOTAZIONIVA
+        ,CASE 
+            WHEN ISNULL(MG66_DIVPREZ, 0) = 0
+                THEN CASE WHEN @INDCALCIMP = 1 AND ISNULL(DO30_PREZZO2, 0) <> 0 AND ISNULL(DO30_QTA2, 0) <> 0 THEN DO30_PREZZO2 ELSE DO30_PREZZO1 END
+            ELSE ROUND(CASE WHEN @INDCALCIMP = 1 AND ISNULL(DO30_PREZZO2, 0) <> 0 AND ISNULL(DO30_QTA2, 0) <> 0 THEN DO30_PREZZO2 ELSE DO30_PREZZO1 END / ISNULL(MG66_DIVPREZ, 0), 8)
+            END AS DO30_PREZZO1_DIVPREZZO
+        , DO11_VALUTA_CG08          AS VALUTA
+        , ISNULL(DO11_CAMBIO, 0)    AS CAMBIO
+        , (CASE WHEN ISNULL(DO82_DITTA_CG18,0) = 0 THEN 0 ELSE 1 END)                                                       AS SPESEPROP_FLG
+        , (CASE WHEN ISNULL(DO82_DITTA_CG18,0) = 0 THEN '' ELSE DO82_CODIVA_CG28 END)                                       AS SPESEPROP_CODIVA
+        , (CASE WHEN DO30_QTA1 = 0 THEN ISNULL(DO82_IMPONIBILE, 0) ELSE ROUND(ISNULL(DO82_IMPONIBILE, 0)/DO30_QTA1,8) END)  AS SPESEPROP_PREZZOUNITARIO
+        , ISNULL(DO82_IMPONIBILE, 0)                                                                                        AS SPESEPROP_IMPONIBILE
+        , ISNULL(DO82_IMPONIBILE_VAL, 0)                                                                                    AS SPESEPROP_IMPONIBILE_VAL
+        , ISNULL(DO82_IMPOSTA, 0)                                                                                           AS SPESEPROP_IMPOSTA
+        , ISNULL(DO82_IMPOSTA_VAL, 0)                                                                                       AS SPESEPROP_IMPOSTA_VAL
+    FROM DO30_DOCCORPO WITH (NOLOCK)
+    INNER JOIN DO11_DOCTESTATA WITH (NOLOCK) ON DO11_DITTA_CG18 = DO30_DITTA_CG18
+        AND DO11_NUMREG_CO99 = DO30_NUMREG_CO99
+    LEFT OUTER JOIN MG3G_DOCDITTA WITH (NOLOCK) ON DO11_DITTA_CG18 = MG3G_DITTA_CG18
+        AND DO11_DOCUM_MG36 = MG3G_CODDOCUM_MG36
+    LEFT OUTER JOIN MG36_DOCUMENTI WITH (NOLOCK) ON MG3G_CODDOCUM_MG36 = MG36_CODDOCUM
+        AND MG3G_INDSTAPER_MG36 = MG36_INDSTAPER
+    LEFT OUTER JOIN DO82_DOCCASTELLETTOIVA_SPESEPROP WITH (NOLOCK) ON 
+        DO82_DITTA_CG18 = DO30_DITTA_CG18
+        AND DO82_NUMREG_CO99 = DO30_NUMREG_CO99
+        AND DO82_PROGRIGA = DO30_PROGRIGA
+    LEFT JOIN CG28_TABCODIVA WITH (NOLOCK) ON CG28_CODICE = (
+            CASE 
+                WHEN DO30_INDTIPORIGA IN (2, 6, 8)
+                    THEN @CODIVAEFF_RIGA_DESCRITTIVA
+                WHEN DO30_INDTIPORIGA = 4
+                    THEN ISNULL(DO82_CODIVA_CG28,DO30_DOCCORPO.DO30_ALIVAEFF_CG28)
+                ELSE DO30_DOCCORPO.DO30_ALIVAEFF_CG28
+                END
+            )        
+
+    LEFT OUTER JOIN MG66_ANAGRART WITH (NOLOCK) ON DO30_DITTA_CG18 = MG66_DITTA_CG18
+        AND DO30_CODART_MG66 = MG66_CODART
+    LEFT OUTER JOIN CN03_PERSCONAI WITH (NOLOCK) ON DO11_DITTA_CG18 = CN03_DITTA_CG18
+        AND CN03_FLGGESTRAEE = 1
+
+    --'** STUDIO 81 - DI FONZO - 25/02/2020 - SN -- DEPRECATO
+    INNER JOIN DO13_DOCTOTALI WITH (NOLOCK) ON DO13_DITTA_CG18 = DO11_DITTA_CG18
+    AND DO13_NUMREG_CO99 = DO11_NUMREG_CO99
+    --'** STUDIO 81 - DI FONZO - 25/02/2020 - SN -- DEPRECATO
+        
+    WHERE DO30_DITTA_CG18 = <<CODICEDITTA>>
+        AND DO30_NUMREG_CO99 = '<<NUMREG>>'
+        AND NOT (
+            (DO30_INDTIPORIGA = 2)
+            AND RTRIM(ISNULL(DO30_DESCART, '')) = ''
+            )
+        AND DO30_INDTIPORIGA IN (0, 1, 2, 4, 6, 8, 15, 16, 17, 18, 19, 12)
+
+        --'** STUDIO 81 - DI FONZO - 25/02/2020 - SN -- DEPRECATO
+        AND NOT (DO30_INDTIPORIGA = 6 AND DO13_SCPERCASSA1 > 0)
+        --'** STUDIO 81 - DI FONZO - 25/02/2020 - EN -- DEPRECATO
+        
+        AND (
+                (DO30_INDPROVRIGA <> 10)
+                OR (
+                    (DO30_INDPROVRIGA = 10)
+                    AND (ISNULL(CN03_FLGGESTRAEE, 0) <> 0)
+                    AND (ISNULL(CN03_INDESPRAEE, 0) = 2)
+                )
+        )
+        AND 0 = (
+            CASE 
+                WHEN MG3G_INDESCLST = 1
+                    THEN CASE 
+                            WHEN MG3G_ESCLST1_MG82 = DO30_CODESCL1_MG82
+                                THEN 1
+                            WHEN MG3G_ESCLST1_MG82 = DO30_CODESCL2_MG82
+                                THEN 1
+                            WHEN MG3G_ESCLST1_MG82 = DO30_CODESCL3_MG82
+                                THEN 1
+                            WHEN MG3G_ESCLST1_MG82 = DO30_CODESCL4_MG82
+                                THEN 1
+                            WHEN MG3G_ESCLST2_MG82 = DO30_CODESCL1_MG82
+                                THEN 1
+                            WHEN MG3G_ESCLST2_MG82 = DO30_CODESCL2_MG82
+                                THEN 1
+                            WHEN MG3G_ESCLST2_MG82 = DO30_CODESCL3_MG82
+                                THEN 1
+                            WHEN MG3G_ESCLST2_MG82 = DO30_CODESCL4_MG82
+                                THEN 1
+                            WHEN MG3G_ESCLST3_MG82 = DO30_CODESCL1_MG82
+                                THEN 1
+                            WHEN MG3G_ESCLST3_MG82 = DO30_CODESCL2_MG82
+                                THEN 1
+                            WHEN MG3G_ESCLST3_MG82 = DO30_CODESCL3_MG82
+                                THEN 1
+                            WHEN MG3G_ESCLST3_MG82 = DO30_CODESCL4_MG82
+                                THEN 1
+                            WHEN MG3G_ESCLST4_MG82 = DO30_CODESCL1_MG82
+                                THEN 1
+                            WHEN MG3G_ESCLST4_MG82 = DO30_CODESCL2_MG82
+                                THEN 1
+                            WHEN MG3G_ESCLST4_MG82 = DO30_CODESCL3_MG82
+                                THEN 1
+                            WHEN MG3G_ESCLST4_MG82 = DO30_CODESCL4_MG82
+                                THEN 1
+                            ELSE 0
+                            END
+                ELSE CASE 
+                        WHEN MG36_ESCLST1_MG82 = DO30_CODESCL1_MG82
+                            THEN 1
+                        WHEN MG36_ESCLST1_MG82 = DO30_CODESCL2_MG82
+                            THEN 1
+                        WHEN MG36_ESCLST1_MG82 = DO30_CODESCL3_MG82
+                            THEN 1
+                        WHEN MG3G_ESCLST1_MG82 = DO30_CODESCL4_MG82
+                            THEN 1
+                        WHEN MG36_ESCLST2_MG82 = DO30_CODESCL1_MG82
+                            THEN 1
+                        WHEN MG36_ESCLST2_MG82 = DO30_CODESCL2_MG82
+                            THEN 1
+                        WHEN MG36_ESCLST2_MG82 = DO30_CODESCL3_MG82
+                            THEN 1
+                        WHEN MG36_ESCLST2_MG82 = DO30_CODESCL4_MG82
+                            THEN 1
+                        WHEN MG36_ESCLST3_MG82 = DO30_CODESCL1_MG82
+                            THEN 1
+                        WHEN MG36_ESCLST3_MG82 = DO30_CODESCL2_MG82
+                            THEN 1
+                        WHEN MG36_ESCLST3_MG82 = DO30_CODESCL3_MG82
+                            THEN 1
+                        WHEN MG36_ESCLST3_MG82 = DO30_CODESCL4_MG82
+                            THEN 1
+                        WHEN MG36_ESCLST4_MG82 = DO30_CODESCL1_MG82
+                            THEN 1
+                        WHEN MG36_ESCLST4_MG82 = DO30_CODESCL2_MG82
+                            THEN 1
+                        WHEN MG36_ESCLST4_MG82 = DO30_CODESCL3_MG82
+                            THEN 1
+                        WHEN MG36_ESCLST4_MG82 = DO30_CODESCL4_MG82
+                            THEN 1
+                        ELSE 0
+                        END
+                END
+            )
+
+    UNION -- RIGA SPESE BOLLI
+    
+    SELECT TOP 1 DO11_DITTA_CG18 AS RIGHEADD_DITTA
+        ,DO11_NUMREG_CO99 AS RIGHEADD_NUMREG
+        ,2 AS RIGHEADD_ORDER
+        ,1 AS RIGHEADD_FLG
+        ,'AC' AS RIGHEADD_TIPORIGA
+        ,'Addebito spese bolli' AS RIGHEADD_DESCRIZIONE
+        ,CAST(1 AS DECIMAL(14, 3)) AS RIGHEADD_QTA
+        ,DO13_TOTSPBOLLI AS RIGHEADD_PREZZOUNITARIO
+        ,DO13_TOTSPBOLLI AS RIGHEADD_PREZZOTOTALE
+        , ISNULL(CG28_CODICE, '')   AS RIGHEADD_CODICEIVA
+        , ISNULL(CG28_PERCIVA, 0)   AS RIGHEADD_ALIQUOTAIVA
+        , ISNULL(CG28_TIPOLOGIA, 0) AS RIGHEADD_TIPOLOGIAIVA
+        ,'SPESEBOLLI' AS RIGHEADD_MOTIVO
+        , 1 AS RIGHEADD_PROG
+        ,DO30_DOCCORPO.*
+        ,0 AS PERCIVA
+        ,0 AS TIPOLOGIAIVA
+        ,'' AS ANNOTAZIONIVA
+        ,0 AS DO30_PREZZO1_DIVPREZZO
+        , 'EURO'    AS VALUTA
+        , 1         AS CAMBIO
+        , 0     AS SPESEPROP_FLG
+        , ''    AS SPESEPROP_CODIVA
+        , 0     AS SPESEPROP_PREZZOUNITARIO
+        , 0     AS SPESEPROP_IMPONIBILE
+        , 0     AS SPESEPROP_IMPONIBILE_VAL
+        , 0     AS SPESEPROP_IMPOSTA
+        , 0     AS SPESEPROP_IMPOSTA_VAL
+    FROM DO30_DOCCORPO WITH (NOLOCK)
+    INNER JOIN DO11_DOCTESTATA WITH (NOLOCK) ON DO11_DITTA_CG18 = DO30_DITTA_CG18
+        AND DO11_NUMREG_CO99 = DO30_NUMREG_CO99
+    INNER JOIN DO13_DOCTOTALI WITH (NOLOCK) ON DO13_DITTA_CG18 = DO11_DITTA_CG18
+        AND DO13_NUMREG_CO99 = DO11_NUMREG_CO99
+    LEFT JOIN CG28_TABCODIVA WITH (NOLOCK) ON
+        CG28_CODICE = DO13_CODIVASPBOLLI_CG28
+    WHERE DO11_DITTA_CG18 = <<CODICEDITTA>>
+        AND DO11_NUMREG_CO99 = '<<NUMREG>>'
+        AND (
+                ISNULL(DO13_TOTSPBOLLI, 0) > 0
+            )
+    
+    UNION -- RIGA SPESE INCASSO
+    
+    SELECT TOP 1 DO11_DITTA_CG18 AS RIGHEADD_DITTA
+        ,DO11_NUMREG_CO99 AS RIGHEADD_NUMREG
+        ,3 AS RIGHEADD_ORDER
+        ,1 AS RIGHEADD_FLG
+        ,'AC' AS RIGHEADD_TIPORIGA
+        ,'Addebito spese incasso' AS RIGHEADD_DESCRIZIONE
+        ,CAST(1 AS DECIMAL(14, 3)) AS RIGHEADD_QTA
+        ,DO13_TOTSPINC AS RIGHEADD_PREZZOUNITARIO
+        ,DO13_TOTSPINC AS RIGHEADD_PREZZOTOTALE
+        , ISNULL(CG28_CODICE, '')   AS RIGHEADD_CODICEIVA
+        , ISNULL(CG28_PERCIVA, 0)   AS RIGHEADD_ALIQUOTAIVA
+        , ISNULL(CG28_TIPOLOGIA, 0) AS RIGHEADD_TIPOLOGIAIVA
+        ,'SPESEINCASSO' AS RIGHEADD_MOTIVO
+        , 1 AS RIGHEADD_PROG
+        ,DO30_DOCCORPO.*
+        ,0 AS PERCIVA
+        ,0 AS TIPOLOGIAIVA
+        ,'' AS ANNOTAZIONIVA
+        ,0 AS DO30_PREZZO1_DIVPREZZO
+        , 'EURO'    AS VALUTA
+        , 1         AS CAMBIO
+        , 0     AS SPESEPROP_FLG
+        , ''    AS SPESEPROP_CODIVA
+        , 0     AS SPESEPROP_PREZZOUNITARIO
+        , 0     AS SPESEPROP_IMPONIBILE
+        , 0     AS SPESEPROP_IMPONIBILE_VAL
+        , 0     AS SPESEPROP_IMPOSTA
+        , 0     AS SPESEPROP_IMPOSTA_VAL
+    FROM DO30_DOCCORPO WITH (NOLOCK)
+    INNER JOIN DO11_DOCTESTATA WITH (NOLOCK) ON DO11_DITTA_CG18 = DO30_DITTA_CG18
+        AND DO11_NUMREG_CO99 = DO30_NUMREG_CO99
+    INNER JOIN DO13_DOCTOTALI WITH (NOLOCK) ON DO13_DITTA_CG18 = DO11_DITTA_CG18
+        AND DO13_NUMREG_CO99 = DO11_NUMREG_CO99
+    LEFT JOIN CG28_TABCODIVA WITH (NOLOCK) ON
+        CG28_CODICE = DO13_CODIVASPINC_CG28
+    WHERE DO11_DITTA_CG18 = <<CODICEDITTA>>
+        AND DO11_NUMREG_CO99 = '<<NUMREG>>'
+        AND (
+                ISNULL(DO13_TOTSPINC, 0) > 0
+            )
+
+    UNION -- RIGA DESCRITTIVA BOLLI
+    
+    SELECT TOP 1 DO11_DITTA_CG18 AS RIGHEADD_DITTA
+        ,DO11_NUMREG_CO99 AS RIGHEADD_NUMREG
+        ,4 AS RIGHEADD_ORDER
+        ,1 AS RIGHEADD_FLG
+        ,'' AS RIGHEADD_TIPORIGA
+        ,'Imposta di bollo assolta in modo virtuale ai sensi dell''art.6 DM 17/06/2014 e art.2 DM 28/12/2018' AS RIGHEADD_DESCRIZIONE
+        ,CAST(0 AS DECIMAL(14, 3)) AS RIGHEADD_QTA
+        ,CAST(0 AS DECIMAL(17, 6)) AS RIGHEADD_PREZZOUNITARIO
+        ,CAST(0 AS DECIMAL(15, 2)) AS RIGHEADD_PREZZOTOTALE
+        , ISNULL(CG28_CODICE, '')   AS RIGHEADD_CODICEIVA
+        , ISNULL(CG28_PERCIVA, 0)   AS RIGHEADD_ALIQUOTAIVA
+        , ISNULL(CG28_TIPOLOGIA, 0) AS RIGHEADD_TIPOLOGIAIVA
+        ,'DESCRITTIVABOLLO' AS RIGHEADD_MOTIVO
+        , 1 AS RIGHEADD_PROG
+        ,DO30_DOCCORPO.*
+        ,0 AS PERCIVA
+        ,0 AS TIPOLOGIAIVA
+        ,'' AS ANNOTAZIONIVA
+        ,0 AS DO30_PREZZO1_DIVPREZZO
+        , 'EURO'    AS VALUTA
+        , 1         AS CAMBIO
+        , 0     AS SPESEPROP_FLG
+        , ''    AS SPESEPROP_CODIVA
+        , 0     AS SPESEPROP_PREZZOUNITARIO
+        , 0     AS SPESEPROP_IMPONIBILE
+        , 0     AS SPESEPROP_IMPONIBILE_VAL
+        , 0     AS SPESEPROP_IMPOSTA
+        , 0     AS SPESEPROP_IMPOSTA_VAL
+    FROM DO30_DOCCORPO WITH (NOLOCK)
+    INNER JOIN <<TABELLA_BODY>> WITH (NOLOCK) ON DO11_DITTA_CG18 = DO30_DITTA_CG18
+        AND DO11_NUMREG_CO99 = DO30_NUMREG_CO99
+    LEFT JOIN CG28_TABCODIVA WITH (NOLOCK) ON
+        CG28_CODICE = @CODIVAEFF_RIGA_DESCRITTIVA   
+    WHERE IDFILE = <<IDFILE>>
+        AND BOLLO_FLAG = 1
+            
+    UNION -- RIGHE STORNO OMAGGI
+    
+    SELECT DO11_DITTA_CG18 AS RIGHEADD_DITTA
+        ,DO11_NUMREG_CO99 AS RIGHEADD_NUMREG
+        ,0 AS RIGHEADD_ORDER
+        ,1 AS RIGHEADD_FLG
+        ,'' AS RIGHEADD_TIPORIGA
+        ,CASE 
+            WHEN DO30_INDTIPOOMAG = 1
+                THEN ISNULL(TRIV.MG62_DESCR, 'Compensazione riga omaggio')
+            WHEN DO30_INDTIPOOMAG = 2
+                THEN ISNULL(TNORIV.MG62_DESCR, 'Compensazione riga omaggio')
+            END AS RIGHEADD_DESCRIZIONE
+        ,CAST(0 AS DECIMAL(14, 3)) AS RIGHEADD_QTA
+        ,(DO30_IMPNETSCP - (ISNULL(DO30_FLGIVANDINCL, 0) * ISNULL(DO30_IVAND, 0)) - (ISNULL(DO30_FLGIVAPRINCL, 0) * ISNULL(DO30_IVAPR, 0)) - (ISNULL(DO30_FLGIVAAGINCL, 0) * ISNULL(DO30_IVAAG, 0))) * (- 1) AS RIGHEADD_PREZZOUNITARIO
+        ,(DO30_IMPNETSCP - (ISNULL(DO30_FLGIVANDINCL, 0) * ISNULL(DO30_IVAND, 0)) - (ISNULL(DO30_FLGIVAPRINCL, 0) * ISNULL(DO30_IVAPR, 0)) - (ISNULL(DO30_FLGIVAAGINCL, 0) * ISNULL(DO30_IVAAG, 0))) * (- 1) AS RIGHEADD_PREZZOTOTALE
+        ,(
+            SELECT MG3A_ALIVAOM_CG28
+            FROM MG3A_DOCPARGEN WITH (NOLOCK)
+            WHERE MG3A_DITTA_CG18 = DO11_DITTA_CG18
+            ) AS RIGHEADD_CODICEIVA
+        ,(
+            SELECT TOP 1 ISNULL(CG28_PERCIVA, 0)
+            FROM CG28_TABCODIVA
+            WHERE CG28_CODICE = (
+                    SELECT MG3A_ALIVAOM_CG28
+                    FROM MG3A_DOCPARGEN WITH (NOLOCK)
+                    WHERE MG3A_DITTA_CG18 = DO11_DITTA_CG18
+                    )
+            ) AS RIGHEADD_ALIQUOTAIVA
+        ,(
+            SELECT TOP 1 ISNULL(CG28_TIPOLOGIA, 0)
+            FROM CG28_TABCODIVA
+            WHERE CG28_CODICE = (
+                    SELECT MG3A_ALIVAOM_CG28
+                    FROM MG3A_DOCPARGEN WITH (NOLOCK)
+                    WHERE MG3A_DITTA_CG18 = DO11_DITTA_CG18
+                    )
+            ) AS RIGHEADD_TIPOLOGIAIVA
+        ,'STORNOOMAGGI' AS RIGHEADD_MOTIVO
+        , 1 AS RIGHEADD_PROG
+        ,DO30_DOCCORPO.*
+        ,0 AS PERCIVA
+        ,0 AS TIPOLOGIAIVA
+        ,'' AS ANNOTAZIONIVA
+        ,0 AS DO30_PREZZO1_DIVPREZZO
+        , 'EURO'    AS VALUTA
+        , 1         AS CAMBIO
+        , 0     AS SPESEPROP_FLG
+        , ''    AS SPESEPROP_CODIVA
+        , 0     AS SPESEPROP_PREZZOUNITARIO
+        , 0     AS SPESEPROP_IMPONIBILE
+        , 0     AS SPESEPROP_IMPONIBILE_VAL
+        , 0     AS SPESEPROP_IMPOSTA
+        , 0     AS SPESEPROP_IMPOSTA_VAL
+    FROM DO30_DOCCORPO WITH (NOLOCK)
+    INNER JOIN DO11_DOCTESTATA WITH (NOLOCK) ON DO11_DITTA_CG18 = DO30_DITTA_CG18
+        AND DO11_NUMREG_CO99 = DO30_NUMREG_CO99
+    INNER JOIN DO13_DOCTOTALI WITH (NOLOCK) ON DO13_DITTA_CG18 = DO11_DITTA_CG18
+        AND DO13_NUMREG_CO99 = DO11_NUMREG_CO99
+    LEFT OUTER JOIN MG3A_DOCPARGEN WITH (NOLOCK) ON DO11_DITTA_CG18 = MG3A_DITTA_CG18
+    LEFT OUTER JOIN MG62_TESTIFIS AS TRIV WITH (NOLOCK) ON MG3A_TESOMRIV_MG62 = TRIV.MG62_CODICE
+    LEFT OUTER JOIN MG62_TESTIFIS AS TNORIV WITH (NOLOCK) ON MG3A_TESOMNOR_MG62 = TNORIV.MG62_CODICE
+    LEFT OUTER JOIN MG3G_DOCDITTA WITH (NOLOCK) ON DO11_DITTA_CG18 = MG3G_DITTA_CG18
+        AND DO11_DOCUM_MG36 = MG3G_CODDOCUM_MG36
+    LEFT OUTER JOIN MG36_DOCUMENTI WITH (NOLOCK) ON MG3G_CODDOCUM_MG36 = MG36_CODDOCUM
+        AND MG3G_INDSTAPER_MG36 = MG36_INDSTAPER
+    WHERE DO11_DITTA_CG18 = <<CODICEDITTA>>
+        AND DO11_NUMREG_CO99 = '<<NUMREG>>'
+        AND DO30_INDTIPOOMAG IN (1, 2)
+        AND NOT (
+            (DO30_INDTIPORIGA = 2)
+            AND RTRIM(ISNULL(DO30_DESCART, '')) = ''
+            )
+        AND DO30_INDTIPORIGA IN (0, 1, 2, 4, 6, 8, 15, 16, 17, 18, 19, 12)
+        AND 0 = (
+            CASE 
+                WHEN MG3G_INDESCLST = 1
+                    THEN CASE 
+                            WHEN MG3G_ESCLST1_MG82 = DO30_CODESCL1_MG82
+                                THEN 1
+                            WHEN MG3G_ESCLST1_MG82 = DO30_CODESCL2_MG82
+                                THEN 1
+                            WHEN MG3G_ESCLST1_MG82 = DO30_CODESCL3_MG82
+                                THEN 1
+                            WHEN MG3G_ESCLST1_MG82 = DO30_CODESCL4_MG82
+                                THEN 1
+                            WHEN MG3G_ESCLST2_MG82 = DO30_CODESCL1_MG82
+                                THEN 1
+                            WHEN MG3G_ESCLST2_MG82 = DO30_CODESCL2_MG82
+                                THEN 1
+                            WHEN MG3G_ESCLST2_MG82 = DO30_CODESCL3_MG82
+                                THEN 1
+                            WHEN MG3G_ESCLST2_MG82 = DO30_CODESCL4_MG82
+                                THEN 1
+                            WHEN MG3G_ESCLST3_MG82 = DO30_CODESCL1_MG82
+                                THEN 1
+                            WHEN MG3G_ESCLST3_MG82 = DO30_CODESCL2_MG82
+                                THEN 1
+                            WHEN MG3G_ESCLST3_MG82 = DO30_CODESCL3_MG82
+                                THEN 1
+                            WHEN MG3G_ESCLST3_MG82 = DO30_CODESCL4_MG82
+                                THEN 1
+                            WHEN MG3G_ESCLST4_MG82 = DO30_CODESCL1_MG82
+                                THEN 1
+                            WHEN MG3G_ESCLST4_MG82 = DO30_CODESCL2_MG82
+                                THEN 1
+                            WHEN MG3G_ESCLST4_MG82 = DO30_CODESCL3_MG82
+                                THEN 1
+                            WHEN MG3G_ESCLST4_MG82 = DO30_CODESCL4_MG82
+                                THEN 1
+                            ELSE 0
+                            END
+                ELSE CASE 
+                        WHEN MG36_ESCLST1_MG82 = DO30_CODESCL1_MG82
+                            THEN 1
+                        WHEN MG36_ESCLST1_MG82 = DO30_CODESCL2_MG82
+                            THEN 1
+                        WHEN MG36_ESCLST1_MG82 = DO30_CODESCL3_MG82
+                            THEN 1
+                        WHEN MG3G_ESCLST1_MG82 = DO30_CODESCL4_MG82
+                            THEN 1
+                        WHEN MG36_ESCLST2_MG82 = DO30_CODESCL1_MG82
+                            THEN 1
+                        WHEN MG36_ESCLST2_MG82 = DO30_CODESCL2_MG82
+                            THEN 1
+                        WHEN MG36_ESCLST2_MG82 = DO30_CODESCL3_MG82
+                            THEN 1
+                        WHEN MG36_ESCLST2_MG82 = DO30_CODESCL4_MG82
+                            THEN 1
+                        WHEN MG36_ESCLST3_MG82 = DO30_CODESCL1_MG82
+                            THEN 1
+                        WHEN MG36_ESCLST3_MG82 = DO30_CODESCL2_MG82
+                            THEN 1
+                        WHEN MG36_ESCLST3_MG82 = DO30_CODESCL3_MG82
+                            THEN 1
+                        WHEN MG36_ESCLST3_MG82 = DO30_CODESCL4_MG82
+                            THEN 1
+                        WHEN MG36_ESCLST4_MG82 = DO30_CODESCL1_MG82
+                            THEN 1
+                        WHEN MG36_ESCLST4_MG82 = DO30_CODESCL2_MG82
+                            THEN 1
+                        WHEN MG36_ESCLST4_MG82 = DO30_CODESCL3_MG82
+                            THEN 1
+                        WHEN MG36_ESCLST4_MG82 = DO30_CODESCL4_MG82
+                            THEN 1
+                        ELSE 0
+                        END
+                END
+            )
+
+    UNION -- SCONTI DI PIEDE
+    
+    SELECT DO11_DITTA_CG18 AS RIGHEADD_DITTA
+        ,DO11_NUMREG_CO99 AS RIGHEADD_NUMREG
+        ,0 AS RIGHEADD_ORDER
+        ,1 AS RIGHEADD_FLG
+        ,'SC' AS RIGHEADD_TIPORIGA
+        ,'Applicazione sconti piede' AS RIGHEADD_DESCRIZIONE
+        ,CAST(0 AS DECIMAL(14, 3)) AS RIGHEADD_QTA
+        ,(DO30_IMPNETSCP - (ISNULL(DO30_FLGIVANDINCL, 0) * ISNULL(DO30_IVAND, 0)) - (ISNULL(DO30_FLGIVAPRINCL, 0) * ISNULL(DO30_IVAPR, 0)) - (ISNULL(DO30_FLGIVAAGINCL, 0) * ISNULL(DO30_IVAAG, 0))) - DO30_IMPORTO AS RIGHEADD_PREZZOUNITARIO
+        ,(DO30_IMPNETSCP - (ISNULL(DO30_FLGIVANDINCL, 0) * ISNULL(DO30_IVAND, 0)) - (ISNULL(DO30_FLGIVAPRINCL, 0) * ISNULL(DO30_IVAPR, 0)) - (ISNULL(DO30_FLGIVAAGINCL, 0) * ISNULL(DO30_IVAAG, 0))) - DO30_IMPORTO AS RIGHEADD_PREZZOTOTALE
+        ,DO30_ALIVAEFF_CG28 AS RIGHEADD_CODICEIVA
+        ,(
+            SELECT TOP 1 ISNULL(CG28_PERCIVA, 0)
+            FROM CG28_TABCODIVA
+            WHERE CG28_CODICE = DO30_ALIVAEFF_CG28
+            ) AS RIGHEADD_ALIQUOTAIVA
+        ,(
+            SELECT TOP 1 ISNULL(CG28_TIPOLOGIA, 0)
+            FROM CG28_TABCODIVA
+            WHERE CG28_CODICE = DO30_ALIVAEFF_CG28
+            ) AS RIGHEADD_TIPOLOGIAIVA
+        ,'SCONTIPIEDE' AS RIGHEADD_MOTIVO
+        , 1 AS RIGHEADD_PROG
+        ,DO30_DOCCORPO.*
+        ,0 AS PERCIVA
+        ,0 AS TIPOLOGIAIVA
+        ,'' AS ANNOTAZIONIVA
+        ,0 AS DO30_PREZZO1_DIVPREZZO
+        , 'EURO'    AS VALUTA
+        , 1         AS CAMBIO
+        , 0     AS SPESEPROP_FLG
+        , ''    AS SPESEPROP_CODIVA
+        , 0     AS SPESEPROP_PREZZOUNITARIO
+        , 0     AS SPESEPROP_IMPONIBILE
+        , 0     AS SPESEPROP_IMPONIBILE_VAL
+        , 0     AS SPESEPROP_IMPOSTA
+        , 0     AS SPESEPROP_IMPOSTA_VAL
+    FROM DO30_DOCCORPO WITH (NOLOCK)
+    INNER JOIN DO11_DOCTESTATA WITH (NOLOCK) ON DO11_DITTA_CG18 = DO30_DITTA_CG18
+        AND DO11_NUMREG_CO99 = DO30_NUMREG_CO99
+    INNER JOIN DO13_DOCTOTALI WITH (NOLOCK) ON DO13_DITTA_CG18 = DO11_DITTA_CG18
+        AND DO13_NUMREG_CO99 = DO11_NUMREG_CO99
+    LEFT OUTER JOIN MG3G_DOCDITTA WITH (NOLOCK) ON DO11_DITTA_CG18 = MG3G_DITTA_CG18
+        AND DO11_DOCUM_MG36 = MG3G_CODDOCUM_MG36
+    LEFT OUTER JOIN MG36_DOCUMENTI WITH (NOLOCK) ON MG3G_CODDOCUM_MG36 = MG36_CODDOCUM
+        AND MG3G_INDSTAPER_MG36 = MG36_INDSTAPER
+    WHERE DO11_DITTA_CG18 = <<CODICEDITTA>>
+        AND DO11_NUMREG_CO99 = '<<NUMREG>>'
+        AND (
+            DO13_SCPERMERCE1 <> 0
+            OR DO13_SCPERMERCE2 <> 0
+            OR DO13_SCPERMERCE3 <> 0
+            OR DO13_SCIMPMERCE <> 0
+            OR ISNULL(DO13_SCIMPART26, 0) <> 0
+            OR ISNULL(DO13_SCPERCART26, 0) <> 0
+            )
+        AND DO30_IMPORTO <> (DO30_IMPNETSCP - (ISNULL(DO30_FLGIVANDINCL, 0) * ISNULL(DO30_IVAND, 0)) - (ISNULL(DO30_FLGIVAPRINCL, 0) * ISNULL(DO30_IVAPR, 0)) - (ISNULL(DO30_FLGIVAAGINCL, 0) * ISNULL(DO30_IVAAG, 0)))
+        AND NOT (
+            (DO30_INDTIPORIGA = 2)
+            AND RTRIM(ISNULL(DO30_DESCART, '')) = ''
+            )
+        AND DO30_INDTIPORIGA IN (0, 1, 2, 4, 6, 8, 15, 16, 17, 18, 19, 12)
+        AND DO11_FLGDEFPIEDE = 0
+        AND @INDCALCIMP <> 2
+        AND 0 = (
+            CASE 
+                WHEN MG3G_INDESCLST = 1
+                    THEN CASE 
+                            WHEN MG3G_ESCLST1_MG82 = DO30_CODESCL1_MG82
+                                THEN 1
+                            WHEN MG3G_ESCLST1_MG82 = DO30_CODESCL2_MG82
+                                THEN 1
+                            WHEN MG3G_ESCLST1_MG82 = DO30_CODESCL3_MG82
+                                THEN 1
+                            WHEN MG3G_ESCLST1_MG82 = DO30_CODESCL4_MG82
+                                THEN 1
+                            WHEN MG3G_ESCLST2_MG82 = DO30_CODESCL1_MG82
+                                THEN 1
+                            WHEN MG3G_ESCLST2_MG82 = DO30_CODESCL2_MG82
+                                THEN 1
+                            WHEN MG3G_ESCLST2_MG82 = DO30_CODESCL3_MG82
+                                THEN 1
+                            WHEN MG3G_ESCLST2_MG82 = DO30_CODESCL4_MG82
+                                THEN 1
+                            WHEN MG3G_ESCLST3_MG82 = DO30_CODESCL1_MG82
+                                THEN 1
+                            WHEN MG3G_ESCLST3_MG82 = DO30_CODESCL2_MG82
+                                THEN 1
+                            WHEN MG3G_ESCLST3_MG82 = DO30_CODESCL3_MG82
+                                THEN 1
+                            WHEN MG3G_ESCLST3_MG82 = DO30_CODESCL4_MG82
+                                THEN 1
+                            WHEN MG3G_ESCLST4_MG82 = DO30_CODESCL1_MG82
+                                THEN 1
+                            WHEN MG3G_ESCLST4_MG82 = DO30_CODESCL2_MG82
+                                THEN 1
+                            WHEN MG3G_ESCLST4_MG82 = DO30_CODESCL3_MG82
+                                THEN 1
+                            WHEN MG3G_ESCLST4_MG82 = DO30_CODESCL4_MG82
+                                THEN 1
+                            ELSE 0
+                            END
+                ELSE CASE 
+                        WHEN MG36_ESCLST1_MG82 = DO30_CODESCL1_MG82
+                            THEN 1
+                        WHEN MG36_ESCLST1_MG82 = DO30_CODESCL2_MG82
+                            THEN 1
+                        WHEN MG36_ESCLST1_MG82 = DO30_CODESCL3_MG82
+                            THEN 1
+                        WHEN MG3G_ESCLST1_MG82 = DO30_CODESCL4_MG82
+                            THEN 1
+                        WHEN MG36_ESCLST2_MG82 = DO30_CODESCL1_MG82
+                            THEN 1
+                        WHEN MG36_ESCLST2_MG82 = DO30_CODESCL2_MG82
+                            THEN 1
+                        WHEN MG36_ESCLST2_MG82 = DO30_CODESCL3_MG82
+                            THEN 1
+                        WHEN MG36_ESCLST2_MG82 = DO30_CODESCL4_MG82
+                            THEN 1
+                        WHEN MG36_ESCLST3_MG82 = DO30_CODESCL1_MG82
+                            THEN 1
+                        WHEN MG36_ESCLST3_MG82 = DO30_CODESCL2_MG82
+                            THEN 1
+                        WHEN MG36_ESCLST3_MG82 = DO30_CODESCL3_MG82
+                            THEN 1
+                        WHEN MG36_ESCLST3_MG82 = DO30_CODESCL4_MG82
+                            THEN 1
+                        WHEN MG36_ESCLST4_MG82 = DO30_CODESCL1_MG82
+                            THEN 1
+                        WHEN MG36_ESCLST4_MG82 = DO30_CODESCL2_MG82
+                            THEN 1
+                        WHEN MG36_ESCLST4_MG82 = DO30_CODESCL3_MG82
+                            THEN 1
+                        WHEN MG36_ESCLST4_MG82 = DO30_CODESCL4_MG82
+                            THEN 1
+                        ELSE 0
+                        END
+                END
+            )
+
+    UNION   -- Composizione materiali CONAI
+        
+    SELECT DO11_DITTA_CG18 AS RIGHEADD_DITTA
+        ,DO11_NUMREG_CO99 AS RIGHEADD_NUMREG
+        ,0 AS RIGHEADD_ORDER
+        ,1 AS RIGHEADD_FLG
+        ,'' AS RIGHEADD_TIPORIGA
+        ,CASE FLGFASCIA WHEN 1 THEN DESCRCONAI_FASCIA ELSE DESCRCONAI_NOFASCIA END AS RIGHEADD_DESCRIZIONE
+        ,CAST(0 AS DECIMAL(14, 3)) AS RIGHEADD_QTA
+        ,CAST(0 AS DECIMAL(17, 6)) AS RIGHEADD_PREZZOUNITARIO
+        ,CAST(0 AS DECIMAL(15, 2)) AS RIGHEADD_PREZZOTOTALE
+        , ISNULL(CG28_CODICE, '')   AS RIGHEADD_CODICEIVA
+        , ISNULL(CG28_PERCIVA, 0)   AS RIGHEADD_ALIQUOTAIVA
+        , ISNULL(CG28_TIPOLOGIA, 0) AS RIGHEADD_TIPOLOGIAIVA
+        ,'COMPOSIZIONECONAI' AS RIGHEADD_MOTIVO
+        , RIGHEADD_PROG
+        ,DO30_DOCCORPO.*
+        ,0 AS PERCIVA
+        ,0 AS TIPOLOGIAIVA
+        ,'' AS ANNOTAZIONIVA
+        ,0 AS DO30_PREZZO1_DIVPREZZO
+        , 'EURO'    AS VALUTA
+        , 1         AS CAMBIO
+        , 0     AS SPESEPROP_FLG
+        , ''    AS SPESEPROP_CODIVA
+        , 0     AS SPESEPROP_PREZZOUNITARIO
+        , 0     AS SPESEPROP_IMPONIBILE
+        , 0     AS SPESEPROP_IMPONIBILE_VAL
+        , 0     AS SPESEPROP_IMPOSTA
+        , 0     AS SPESEPROP_IMPOSTA_VAL
+    FROM DO30_DOCCORPO WITH (NOLOCK)
+    INNER JOIN DO11_DOCTESTATA WITH (NOLOCK) ON DO11_DITTA_CG18 = DO30_DITTA_CG18
+        AND DO11_NUMREG_CO99 = DO30_NUMREG_CO99
+    LEFT JOIN CG28_TABCODIVA WITH (NOLOCK) ON
+        CG28_CODICE = @CODIVAEFF_RIGA_DESCRITTIVA   
+    INNER JOIN CN09_PARAMDOCUM WITH (NOLOCK) ON DO11_DITTA_CG18 = CN09_DITTA_CG18
+        AND DO11_DOCUM_MG36 = CN09_CODDOCUM_MG36
+        AND CN09_INDCONTRAMB = 0
+    CROSS APPLY (
+        SELECT
+            ROW_NUMBER() OVER(ORDER BY CN00_INDMATER) AS RIGHEADD_PROG
+            , CN00_INDMATER
+            , CASE WHEN CN14_INDMATER_CN00 IS NOT NULL THEN 1 ELSE 0 END AS FLGFASCIA
+            , '(' + RTRIM(CN00_DESCR) + ' - ' + RTRIM(CN14_CODICE) + ' ton. cadauna ' + CAST(SUM(ISNULL(DO59_QTAUNITESEN, 0)) + SUM(ISNULL(DO59_QTAUNITSOGG, 0)) AS VARCHAR(20)) + ')' + CASE WHEN PERCPLAFOND IS NOT NULL THEN ' Plafond ' + CAST(PERCPLAFOND AS VARCHAR(10)) + '%' ELSE '' END AS DESCRCONAI_FASCIA
+            , '(' + RTRIM(CN00_DESCR) + ' - ton. cadauna ' + CAST(SUM(ISNULL(DO59_QTAUNITESEN, 0)) + SUM(ISNULL(DO59_QTAUNITSOGG, 0)) AS VARCHAR(20)) + ')' + CASE WHEN PERCPLAFOND IS NOT NULL THEN ' Plafond ' + CAST(PERCPLAFOND AS VARCHAR(10)) + '%' ELSE '' END AS DESCRCONAI_NOFASCIA
+        FROM
+            DO59_DOCCORPOCONAI WITH (NOLOCK)
+            INNER JOIN
+            DO11_DOCTESTATA WITH (NOLOCK)
+            ON
+            DO59_DITTA_CG18 = DO11_DITTA_CG18
+            AND DO59_NUMREG_CO99 = DO11_NUMREG_CO99
+            INNER JOIN
+            CN00_INDICEMATERIALI WITH (NOLOCK)
+            ON
+            DO59_INDMATER_CN00 = CN00_INDMATER
+            AND CN00_INDCONTRAMB = 0
+            INNER JOIN
+            CN02_TIPOIMBALLI WITH (NOLOCK)
+            ON
+            DO59_INDMATER_CN00 = CN02_INDMATER_CN00
+            AND DO59_INDIMBALLO_CN02 = CN02_INDIMBALLO
+            LEFT OUTER JOIN
+            CN14_FASCECONTRIBUTIVE WITH (NOLOCK)
+            ON
+            CN02_INDMATER_CN00 = CN14_INDMATER_CN00
+            AND CN02_INDFASCIA_CN14 = CN14_INDFASCIA
+            OUTER APPLY(
+                SELECT TOP 1
+                    ISNULL(CN18_PERCPLAFOND, CN11_PERCPLAFOND)            AS PERCPLAFOND
+                FROM
+                    CN11_ESENPLAFCLIFOR
+                INNER JOIN (
+                    SELECT 
+                        MAX(CN10_DATAINIZIO) AS DATAINIZIO_ULTIMAPOSIZIONE 
+                    FROM CN10_DATIAGGCLIFOR 
+                    WHERE
+                        CN10_INDCONTRAMB = 0
+                        AND CN10_DITTA_CG18 = DO11_DITTA_CG18
+                        AND CN10_TIPOCF_CG44 = DO11_TIPOCF_CG44
+                        AND CN10_CLIFOR_CG44 = DO11_CLIFOR_CG44
+                        AND CN10_DATAINIZIO <= DO11_DATADOC 
+                ) AS TBL_DATAINIZIO_ULTIMAPOSIZIONE ON TBL_DATAINIZIO_ULTIMAPOSIZIONE.DATAINIZIO_ULTIMAPOSIZIONE = CN11_DATAINIZIO_CN10
+                LEFT OUTER JOIN CN18_ESENPLAFFASCECF WITH (NOLOCK)
+                    ON CN18_ID_CN11 = CN11_ID
+                    AND CN18_ID_CN14 = CN14_ID
+                WHERE
+                    CN11_INDCONTRAMB_CN10 = 0
+                    AND CN11_DITTA_CG18 = DO11_DITTA_CG18
+                    AND CN11_TIPOCF_CG44 = DO11_TIPOCF_CG44
+                    AND CN11_CLIFOR_CG44 = DO11_CLIFOR_CG44
+                    AND CN11_INDMATER_CN00  = CN02_INDMATER_CN00
+                ORDER BY
+                    CN11_DATAINIZIO_CN10 DESC
+            ) AS TABPLAFOND
+        WHERE
+            DO59_DITTA_CG18 = DO30_DITTA_CG18
+            AND DO59_NUMREG_CO99 = DO30_NUMREG_CO99
+            AND DO59_PROGRIGA = DO30_PROGRIGA
+        GROUP BY
+            CN00_INDMATER
+            , CN14_INDMATER_CN00
+            , CN00_DESCR
+            , CN14_CODICE
+            , TABPLAFOND.PERCPLAFOND
+    ) AS DESCRIZIONI_CONAI
+    LEFT OUTER JOIN MG3G_DOCDITTA WITH (NOLOCK) ON DO11_DITTA_CG18 = MG3G_DITTA_CG18
+        AND DO11_DOCUM_MG36 = MG3G_CODDOCUM_MG36
+    LEFT OUTER JOIN MG36_DOCUMENTI WITH (NOLOCK) ON MG3G_CODDOCUM_MG36 = MG36_CODDOCUM
+        AND MG3G_INDSTAPER_MG36 = MG36_INDSTAPER
+    WHERE DO11_DITTA_CG18 = <<CODICEDITTA>>
+        AND DO11_NUMREG_CO99 = '<<NUMREG>>'
+        AND DO30_INDTIPORIGA = 0
+        AND DO30_INDPROVRIGA = 0
+        AND (DO11_FLGNOCAMB = 0 AND DO30_FLGNOCAMB = 0)
+        AND 0 = (
+            CASE 
+                WHEN MG3G_INDESCLST = 1
+                    THEN CASE 
+                            WHEN MG3G_ESCLST1_MG82 = DO30_CODESCL1_MG82
+                                THEN 1
+                            WHEN MG3G_ESCLST1_MG82 = DO30_CODESCL2_MG82
+                                THEN 1
+                            WHEN MG3G_ESCLST1_MG82 = DO30_CODESCL3_MG82
+                                THEN 1
+                            WHEN MG3G_ESCLST1_MG82 = DO30_CODESCL4_MG82
+                                THEN 1
+                            WHEN MG3G_ESCLST2_MG82 = DO30_CODESCL1_MG82
+                                THEN 1
+                            WHEN MG3G_ESCLST2_MG82 = DO30_CODESCL2_MG82
+                                THEN 1
+                            WHEN MG3G_ESCLST2_MG82 = DO30_CODESCL3_MG82
+                                THEN 1
+                            WHEN MG3G_ESCLST2_MG82 = DO30_CODESCL4_MG82
+                                THEN 1
+                            WHEN MG3G_ESCLST3_MG82 = DO30_CODESCL1_MG82
+                                THEN 1
+                            WHEN MG3G_ESCLST3_MG82 = DO30_CODESCL2_MG82
+                                THEN 1
+                            WHEN MG3G_ESCLST3_MG82 = DO30_CODESCL3_MG82
+                                THEN 1
+                            WHEN MG3G_ESCLST3_MG82 = DO30_CODESCL4_MG82
+                                THEN 1
+                            WHEN MG3G_ESCLST4_MG82 = DO30_CODESCL1_MG82
+                                THEN 1
+                            WHEN MG3G_ESCLST4_MG82 = DO30_CODESCL2_MG82
+                                THEN 1
+                            WHEN MG3G_ESCLST4_MG82 = DO30_CODESCL3_MG82
+                                THEN 1
+                            WHEN MG3G_ESCLST4_MG82 = DO30_CODESCL4_MG82
+                                THEN 1
+                            ELSE 0
+                            END
+                ELSE CASE 
+                        WHEN MG36_ESCLST1_MG82 = DO30_CODESCL1_MG82
+                            THEN 1
+                        WHEN MG36_ESCLST1_MG82 = DO30_CODESCL2_MG82
+                            THEN 1
+                        WHEN MG36_ESCLST1_MG82 = DO30_CODESCL3_MG82
+                            THEN 1
+                        WHEN MG3G_ESCLST1_MG82 = DO30_CODESCL4_MG82
+                            THEN 1
+                        WHEN MG36_ESCLST2_MG82 = DO30_CODESCL1_MG82
+                            THEN 1
+                        WHEN MG36_ESCLST2_MG82 = DO30_CODESCL2_MG82
+                            THEN 1
+                        WHEN MG36_ESCLST2_MG82 = DO30_CODESCL3_MG82
+                            THEN 1
+                        WHEN MG36_ESCLST2_MG82 = DO30_CODESCL4_MG82
+                            THEN 1
+                        WHEN MG36_ESCLST3_MG82 = DO30_CODESCL1_MG82
+                            THEN 1
+                        WHEN MG36_ESCLST3_MG82 = DO30_CODESCL2_MG82
+                            THEN 1
+                        WHEN MG36_ESCLST3_MG82 = DO30_CODESCL3_MG82
+                            THEN 1
+                        WHEN MG36_ESCLST3_MG82 = DO30_CODESCL4_MG82
+                            THEN 1
+                        WHEN MG36_ESCLST4_MG82 = DO30_CODESCL1_MG82
+                            THEN 1
+                        WHEN MG36_ESCLST4_MG82 = DO30_CODESCL2_MG82
+                            THEN 1
+                        WHEN MG36_ESCLST4_MG82 = DO30_CODESCL3_MG82
+                            THEN 1
+                        WHEN MG36_ESCLST4_MG82 = DO30_CODESCL4_MG82
+                            THEN 1
+                        ELSE 0
+                        END
+                END
+            )
+
+    UNION   -- Contributo RAEE - ESPOSIZIONE PER RIGA
+        
+    SELECT DO11_DITTA_CG18 AS RIGHEADD_DITTA
+        ,DO11_NUMREG_CO99 AS RIGHEADD_NUMREG
+        ,0 AS RIGHEADD_ORDER
+        ,1 AS RIGHEADD_FLG
+        ,'' AS RIGHEADD_TIPORIGA
+        ,DETTRAEE_DESCRIZIONE                       AS RIGHEADD_DESCRIZIONE
+        ,DETTRAEE_QTA                               AS RIGHEADD_QTA
+        ,DETTRAEE_PREZZOUN                          AS RIGHEADD_PREZZOUNITARIO
+        ,DETTRAEE_PREZZOTOT                         AS RIGHEADD_PREZZOTOTALE
+        , ISNULL(CG28_CODICE, '')   AS RIGHEADD_CODICEIVA
+        , ISNULL(CG28_PERCIVA, 0)   AS RIGHEADD_ALIQUOTAIVA
+        , ISNULL(CG28_TIPOLOGIA, 0) AS RIGHEADD_TIPOLOGIAIVA
+        ,'DETTAGLIORAEE' AS RIGHEADD_MOTIVO
+        ,DETTRAEE_PROG AS RIGHEADD_PROG
+        ,DO30_DOCCORPO.*
+        ,0 AS PERCIVA
+        ,0 AS TIPOLOGIAIVA
+        ,'' AS ANNOTAZIONIVA
+        ,0 AS DO30_PREZZO1_DIVPREZZO
+        , 'EURO'    AS VALUTA
+        , 1         AS CAMBIO
+        , 0     AS SPESEPROP_FLG
+        , ''    AS SPESEPROP_CODIVA
+        , 0     AS SPESEPROP_PREZZOUNITARIO
+        , 0     AS SPESEPROP_IMPONIBILE
+        , 0     AS SPESEPROP_IMPONIBILE_VAL
+        , 0     AS SPESEPROP_IMPOSTA
+        , 0     AS SPESEPROP_IMPOSTA_VAL
+    FROM DO30_DOCCORPO WITH (NOLOCK)
+    INNER JOIN DO11_DOCTESTATA WITH (NOLOCK) ON DO11_DITTA_CG18 = DO30_DITTA_CG18
+        AND DO11_NUMREG_CO99 = DO30_NUMREG_CO99
+    LEFT JOIN CG28_TABCODIVA WITH (NOLOCK) ON
+        CG28_CODICE = DO30_DOCCORPO.DO30_ALIVAEFF_CG28   
+    INNER JOIN CN03_PERSCONAI WITH (NOLOCK) ON DO11_DITTA_CG18 = CN03_DITTA_CG18
+        AND CN03_FLGGESTRAEE = 1
+        AND CN03_INDESPRAEE = 1         -- Esposizione per riga e non per documento
+    CROSS APPLY (
+        SELECT
+            ROW_NUMBER() OVER(ORDER BY CN00_INDMATER)                                   AS DETTRAEE_PROG
+            , RTRIM(ISNULL(CN00_DESCR, '')) + ' - ' + RTRIM(ISNULL(CN02_DESCR, ''))     AS DETTRAEE_DESCRIZIONE
+            , ROUND(ISNULL(DO59_QTAUNITSOGG, 0) * ISNULL(DO30_QTA1, 0), MG50_DECIMQTA1) AS DETTRAEE_QTA
+            , CASE
+                    WHEN ISNULL(CN02_CONTRIBUNIT, 0) <> 0 THEN CN02_CONTRIBUNIT
+                    ELSE ISNULL(CN01_CONTRIBUNIT, 0)
+            END                                                                         AS DETTRAEE_PREZZOUN
+            , ROUND(
+                CASE
+                    WHEN ISNULL(CN02_CONTRIBUNIT, 0) <> 0 THEN CN02_CONTRIBUNIT
+                    ELSE ISNULL(CN01_CONTRIBUNIT, 0)
+                END
+                * ROUND(ISNULL(DO59_QTAUNITSOGG, 0) * ISNULL(DO30_QTA1, 0), MG50_DECIMQTA1)
+            , CG08_NUMDEC)                                                              AS DETTRAEE_PREZZOTOT
+        FROM
+            DO59_DOCCORPOCONAI WITH (NOLOCK)
+            INNER JOIN
+            DO11_DOCTESTATA WITH (NOLOCK)
+            ON
+            DO59_DITTA_CG18 = DO11_DITTA_CG18
+            AND DO59_NUMREG_CO99 = DO11_NUMREG_CO99
+            INNER JOIN
+            CG08_TABVALUTE WITH (NOLOCK)
+            ON
+            DO11_VALUTA_CG08 = CG08_CODICE
+            INNER JOIN
+            MG50_PARMAGAZ WITH (NOLOCK)
+            ON
+            DO59_DITTA_CG18 = MG50_DITTA_CG18
+            INNER JOIN
+            CN00_INDICEMATERIALI WITH (NOLOCK)
+            ON
+            DO59_INDMATER_CN00 = CN00_INDMATER
+            AND CN00_INDCONTRAMB = 1
+            INNER JOIN
+            CN02_TIPOIMBALLI WITH (NOLOCK)
+            ON
+            DO59_INDMATER_CN00 = CN02_INDMATER_CN00
+            AND DO59_INDIMBALLO_CN02 = CN02_INDIMBALLO
+            LEFT OUTER JOIN
+            CN01_MATERIALI WITH (NOLOCK)
+            ON
+            CN00_INDMATER = CN01_INDMATER_CN00
+            AND DO11_DATADOC BETWEEN CN01_DATAINIZIO AND CN01_DATAFINE
+        WHERE
+            DO59_DITTA_CG18 = DO30_DITTA_CG18
+            AND DO59_NUMREG_CO99 = DO30_NUMREG_CO99
+            AND DO59_PROGRIGA = DO30_PROGRIGA
+    ) AS TABDETTRAEE
+    LEFT OUTER JOIN MG3G_DOCDITTA WITH (NOLOCK) ON DO11_DITTA_CG18 = MG3G_DITTA_CG18
+        AND DO11_DOCUM_MG36 = MG3G_CODDOCUM_MG36
+    LEFT OUTER JOIN MG36_DOCUMENTI WITH (NOLOCK) ON MG3G_CODDOCUM_MG36 = MG36_CODDOCUM
+        AND MG3G_INDSTAPER_MG36 = MG36_INDSTAPER
+    WHERE DO11_DITTA_CG18 = <<CODICEDITTA>>
+        AND DO11_NUMREG_CO99 = '<<NUMREG>>'
+        AND DO30_INDTIPORIGA = 0
+        AND DO30_INDPROVRIGA = 0
+        AND (DO11_FLGNOCAMB = 0 AND DO30_FLGNOCAMB = 0)
+        AND 0 = (
+            CASE 
+                WHEN MG3G_INDESCLST = 1
+                    THEN CASE 
+                            WHEN MG3G_ESCLST1_MG82 = DO30_CODESCL1_MG82
+                                THEN 1
+                            WHEN MG3G_ESCLST1_MG82 = DO30_CODESCL2_MG82
+                                THEN 1
+                            WHEN MG3G_ESCLST1_MG82 = DO30_CODESCL3_MG82
+                                THEN 1
+                            WHEN MG3G_ESCLST1_MG82 = DO30_CODESCL4_MG82
+                                THEN 1
+                            WHEN MG3G_ESCLST2_MG82 = DO30_CODESCL1_MG82
+                                THEN 1
+                            WHEN MG3G_ESCLST2_MG82 = DO30_CODESCL2_MG82
+                                THEN 1
+                            WHEN MG3G_ESCLST2_MG82 = DO30_CODESCL3_MG82
+                                THEN 1
+                            WHEN MG3G_ESCLST2_MG82 = DO30_CODESCL4_MG82
+                                THEN 1
+                            WHEN MG3G_ESCLST3_MG82 = DO30_CODESCL1_MG82
+                                THEN 1
+                            WHEN MG3G_ESCLST3_MG82 = DO30_CODESCL2_MG82
+                                THEN 1
+                            WHEN MG3G_ESCLST3_MG82 = DO30_CODESCL3_MG82
+                                THEN 1
+                            WHEN MG3G_ESCLST3_MG82 = DO30_CODESCL4_MG82
+                                THEN 1
+                            WHEN MG3G_ESCLST4_MG82 = DO30_CODESCL1_MG82
+                                THEN 1
+                            WHEN MG3G_ESCLST4_MG82 = DO30_CODESCL2_MG82
+                                THEN 1
+                            WHEN MG3G_ESCLST4_MG82 = DO30_CODESCL3_MG82
+                                THEN 1
+                            WHEN MG3G_ESCLST4_MG82 = DO30_CODESCL4_MG82
+                                THEN 1
+                            ELSE 0
+                            END
+                ELSE CASE 
+                        WHEN MG36_ESCLST1_MG82 = DO30_CODESCL1_MG82
+                            THEN 1
+                        WHEN MG36_ESCLST1_MG82 = DO30_CODESCL2_MG82
+                            THEN 1
+                        WHEN MG36_ESCLST1_MG82 = DO30_CODESCL3_MG82
+                            THEN 1
+                        WHEN MG3G_ESCLST1_MG82 = DO30_CODESCL4_MG82
+                            THEN 1
+                        WHEN MG36_ESCLST2_MG82 = DO30_CODESCL1_MG82
+                            THEN 1
+                        WHEN MG36_ESCLST2_MG82 = DO30_CODESCL2_MG82
+                            THEN 1
+                        WHEN MG36_ESCLST2_MG82 = DO30_CODESCL3_MG82
+                            THEN 1
+                        WHEN MG36_ESCLST2_MG82 = DO30_CODESCL4_MG82
+                            THEN 1
+                        WHEN MG36_ESCLST3_MG82 = DO30_CODESCL1_MG82
+                            THEN 1
+                        WHEN MG36_ESCLST3_MG82 = DO30_CODESCL2_MG82
+                            THEN 1
+                        WHEN MG36_ESCLST3_MG82 = DO30_CODESCL3_MG82
+                            THEN 1
+                        WHEN MG36_ESCLST3_MG82 = DO30_CODESCL4_MG82
+                            THEN 1
+                        WHEN MG36_ESCLST4_MG82 = DO30_CODESCL1_MG82
+                            THEN 1
+                        WHEN MG36_ESCLST4_MG82 = DO30_CODESCL2_MG82
+                            THEN 1
+                        WHEN MG36_ESCLST4_MG82 = DO30_CODESCL3_MG82
+                            THEN 1
+                        WHEN MG36_ESCLST4_MG82 = DO30_CODESCL4_MG82
+                            THEN 1
+                        ELSE 0
+                        END
+                END
+            )
+    ) AS RIGHE
+
+CREATE NONCLUSTERED INDEX IDX01_TEMP_TABELLA_RIGHE ON #TABELLA_RIGHE(
+    DO30_DITTA_CG18
+    , DO30_NUMREG_CO99
+    , DO30_PROGRIGA_CALCOLATO
+    , NUMEROLINEA
+)    
+
+SELECT TOP 1 0 AS DUMMY FROM DO11_DOCTESTATA
+
+
+*************************************************************************************************************
+*************************************************************************************************************
+2.1.1.8.2 - Percentuale
+*************************************************************************************************************
+*************************************************************************************************************
+
+    If CDbl(rs_2_1_1_8("SQUADRATURA")) > 0 Then
+                elemento = "SC"
+End If
+
+'** STUDIO 81 - DI FONZO - 25/02/2020 - SN
+    If CDbl(rs_2_1_1_8("SQUADRATURA")) > 0 Then
+        elemento = "SC"
+    End If
+'** STUDIO 81 - DI FONZO - 25/02/2020 - EN
+
+
+*************************************************************************************************************
+*************************************************************************************************************
+2.1.1.8 - ScontoMaggiorazione
+*************************************************************************************************************
+*************************************************************************************************************
+
+
+        SELECT
+    (
+           DO13_TOTDOCUMENTO
+        - DO13_ACCONTO
+        - DO13_TOTAPAGARE
+        - ISNULL(DO13_IMPRITACC, 0)
+        - ISNULL((
+            SELECT
+                SUM(DO74_IMPOSTA)
+            FROM
+                DO74_DOCCASTELLETTOIVA WITH (NOLOCK)
+                INNER JOIN DO11_DOCTESTATA
+        ON DO11_DITTA_CG18=DO74_DITTA_CG18
+        AND DO11_NUMREG_CO99= DO74_NUMREG_CO99 
+    INNER JOIN
+                CG28_TABCODIVA WITH (NOLOCK)
+                ON
+                DO74_ALIQIVA1_CG28 = CG28_CODICE
+            WHERE
+                DO74_DITTA_CG18 = <<CODICEDITTA>>
+                AND DO74_NUMREG_CO99 = '<<NUMREG>>'
+                AND CG28_TIPOLOGIA = 1
+                AND CG28_FLGSOSPIMP = 3
+            
+        ), 0)
+    - ISNULL(DO13_IMPENASAGE, 0)
+    - ISNULL(DO13_IMPCONTRPREVPERC, 0)
+    ) AS SQUADRATURA,
+    --'** STUDIO 81 - DI FONZO - 25/02/2020 - SN
+    DO13_SCPERCASSA1 AS PERCENTUALE
+    --'** STUDIO 81 - DI FONZO - 25/02/2020 - EN
+FROM DO13_DOCTOTALI
+INNER JOIN DO11_DOCTESTATA 
+       ON DO11_DITTA_CG18=DO13_DITTA_CG18
+      AND DO11_NUMREG_CO99=DO13_NUMREG_CO99
+WHERE DO13_DITTA_CG18 = <<CODICEDITTA>>
+    AND DO13_NUMREG_CO99 = '<<NUMREG>>'
+    AND (
+          DO13_TOTDOCUMENTO
+        - DO13_ACCONTO
+        - DO13_TOTAPAGARE
+        - ISNULL(DO13_IMPRITACC, 0)
+        - ISNULL((
+                SELECT
+                    SUM(DO74_IMPOSTA)
+                FROM
+                    DO74_DOCCASTELLETTOIVA WITH (NOLOCK)
+                    INNER JOIN
+                    CG28_TABCODIVA WITH (NOLOCK)
+                    ON
+                    DO74_ALIQIVA1_CG28 = CG28_CODICE
+                WHERE
+                    DO74_DITTA_CG18 = <<CODICEDITTA>>
+                    AND DO74_NUMREG_CO99 = '<<NUMREG>>'
+                    AND CG28_TIPOLOGIA = 1
+                    AND CG28_FLGSOSPIMP = 3
+            
+            ), 0)
+        - ISNULL(DO13_IMPENASAGE, 0)
+        - ISNULL(DO13_IMPCONTRPREVPERC, 0)
+    ) > 0
+
+
+
+*************************************************************************************************************
+*************************************************************************************************************
+2.2.1.16 - AltriDatiGestionali
+*************************************************************************************************************
+*************************************************************************************************************
+
+
+        DECLARE @NUMREG AS CHAR(12)
+        DECLARE @DITTA AS INTEGER
+        DECLARE @PROGRIGA AS INTEGER
+        DECLARE @RIGA_ADDMOTIVO_ASW AS VARCHAR(50)
+        SET @PROGRIGA = <<PROGRIGA>>
+        SET @NUMREG = '<<NUMREG>>'
+        SET @DITTA = <<CODICEDITTA>>    
+        SET @RIGA_ADDMOTIVO_ASW = '<<RIGA_ADDMOTIVO_ASW>>'  --UTILIZZO LA VARIABILE PER ASW ANCHE SE NON SONO IN ASW, MI SERVE PER TRATTENUTE ENASARCO
+        -- RIGHE SCONTO 100% + OMAGGI con e senza RIVALSA
+        IF (@PROGRIGA>0 AND 
+                (SELECT COUNT(*) FROM DO30_DOCCORPO 
+                    WHERE DO30_DITTA_CG18 =@DITTA 
+                    AND DO30_NUMREG_CO99=@NUMREG 
+                    AND DO30_PROGRIGA = @PROGRIGA 
+                    AND ISNULL(DO30_INDTIPOOMAG,0) > 0
+                 ) >0
+            )
+            BEGIN
+            
+                SELECT 
+                1 AS ORDINE
+                ,'' AS CODICESPESA
+                , 0 AS PROPORZIONALE
+                ,'Omaggio' AS TIPODATO
+                ,'Sconto merce' AS RIFTESTO
+                , 0 AS RIFNUMERO
+                , '' AS RIFDATA
+                FROM DO30_DOCCORPO
+                WHERE DO30_DITTA_CG18 =@DITTA 
+                    AND DO30_NUMREG_CO99 = @NUMREG 
+                    AND DO30_PROGRIGA = @PROGRIGA
+                    AND ISNULL(DO30_INDTIPOOMAG,0) = 3
+                UNION
+            
+                SELECT 
+                2 AS ORDINE
+                ,'' AS CODICESPESA
+                , 0 AS PROPORZIONALE
+                ,'Omaggio' AS TIPODATO
+                ,'Con Rivalsa' AS RIFTESTO
+                , 0 AS RIFNUMERO
+                , '' AS RIFDATA
+                FROM DO30_DOCCORPO
+                WHERE DO30_DITTA_CG18 =@DITTA 
+                    AND DO30_NUMREG_CO99 = @NUMREG 
+                    AND DO30_PROGRIGA = @PROGRIGA
+                    AND ISNULL(DO30_INDTIPOOMAG,0) = 1
+            
+                UNION
+
+                SELECT 
+                3 AS ORDINE
+                ,'' AS CODICESPESA
+                , 0 AS PROPORZIONALE
+                ,'Omaggio' AS TIPODATO
+                ,'Senza Rivalsa' AS RIFTESTO
+                , 0 AS RIFNUMERO
+                , '' AS RIFDATA
+                FROM DO30_DOCCORPO
+                WHERE DO30_DITTA_CG18 =@DITTA 
+                    AND DO30_NUMREG_CO99 = @NUMREG 
+                    AND DO30_PROGRIGA = @PROGRIGA
+                    AND ISNULL(DO30_INDTIPOOMAG,0) = 2
+                    
+----------------------------------------------------------------------------------------------------------------
+-- BLOCCO DA DECOMMENTARE E ADATTARE PER INSERIRE IL RIFERIMENTO TARGA
+-- SOSTITUIRE IL CAMPO DO35_ALFPERS2 CON L'EFFETTIVO CAMPO UTILIZZATO DAL CAMPO PERSONALIZZATO DI CORPO
+-- N.B. DECOMMENTARE ALLO STESSO MODO ANCHE L'ANALOGO BLOCCO PIU IN BASSO
+----------------------------------------------------------------------------------------------------------------
+                --'** STUDIO 81 - DI FONZO - 25/02/2020 - SN
+                UNION
+            
+                SELECT 
+                4 AS ORDINE
+                ,'' AS CODICESPESA
+                , 0 AS PROPORZIONALE
+                , DO36_ALFST1 AS TIPODATO
+                , DO05_DESCRIZIONE AS RIFTESTO
+                , 0 AS RIFNUMERO
+                , '' AS RIFDATA
+                FROM DO30_DOCCORPO
+                INNER JOIN DO36_DOCCORPOEST ON DO30_DITTA_CG18 = DO36_DITTA_CG18 AND 
+                                               DO30_NUMREG_CO99 = DO36_NUMREG_CO99 AND 
+                                               DO30_PROGRIGA = DO36_PROGRIGA
+                                               inner join DO05_ANAGCAMPIPERS on DO05_CODICE = DO36_ALFST1
+                WHERE DO30_DITTA_CG18 =@DITTA 
+                    AND DO30_NUMREG_CO99 = @NUMREG 
+                    AND DO30_PROGRIGA = @PROGRIGA
+                    --AND ISNULL(DO30_INDTIPOOMAG,0) = 1
+                --'** STUDIO 81 - DI FONZO - 25/02/2020 - EN
+                
+--                UNION  
+                    
+--                SELECT 
+--                4 AS ORDINE
+--                , '' AS CODICESPESA
+--                , 0 AS PROPORZIONALE
+--                , 'TARGA' AS TIPODATO
+--                , DO35_ALFPERS2 AS RIFTESTO
+--                , 0 AS RIFNUMERO
+--                , '' AS RIFDATA
+--                FROM DO30_DOCCORPO
+--                INNER JOIN DO35_DOCCORPOPERS 
+--                    ON DO35_DITTA_CG18 = DO30_DITTA_CG18 
+--                    AND DO35_NUMREG_CO99 = DO30_NUMREG_CO99 
+--                    AND DO35_PROGRIGA = DO30_PROGRIGA
+--                    AND DO35_PROG = 1            
+--                WHERE DO30_DITTA_CG18 =@DITTA 
+--                    AND DO30_NUMREG_CO99 = @NUMREG 
+--                    AND DO30_PROGRIGA = @PROGRIGA
+--                    AND ISNULL(DO35_ALFPERS2,'')<>''
+
+----------------------------------------------------------------------------------------------------------------
+-- BLOCCO DA DECOMMENTARE E ADATTARE PER INSERIRE IL RIFERIMENTO ALLO SCONTRINO
+-- SOSTITUIRE IL CAMPO DO35_ALFPERS3 CON L'EFFETTIVO CAMPO UTILIZZATO DAL CAMPO PERSONALIZZATO DI CORPO
+-- N.B. DECOMMENTARE ALLO STESSO MODO ANCHE L'ANALOGO BLOCCO PIU IN BASSO
+----------------------------------------------------------------------------------------------------------------
+                    
+--                UNION
+
+--                SELECT 
+--                5 AS ORDINE
+--                , '' AS CODICESPESA
+--                , 0 AS PROPORZIONALE
+--                , 'SCONTRINO' AS TIPODATO
+--                , DO35_ALFPERS3 AS RIFTESTO
+--                , 0 AS RIFNUMERO
+--                , CONVERT(char(10), DO35_DATAPERS1, 126) AS RIFDATA
+--                FROM DO30_DOCCORPO
+--                INNER JOIN DO35_DOCCORPOPERS 
+--                    ON DO35_DITTA_CG18 = DO30_DITTA_CG18 
+--                    AND DO35_NUMREG_CO99 = DO30_NUMREG_CO99 
+--                    AND DO35_PROGRIGA = DO30_PROGRIGA
+--                    AND DO35_PROG = 1            
+--                WHERE DO30_DITTA_CG18 =@DITTA 
+--                    AND DO30_NUMREG_CO99 = @NUMREG 
+--                    AND DO30_PROGRIGA = @PROGRIGA
+--                    AND ISNULL(DO35_ALFPERS3,'')<>''
+--                    AND ISNULL(DO35_DATAPERS1,'')<>''
+                    
+            END
+        ELSE
+            BEGIN
+                SELECT 
+                1 AS ORDINE
+                , '' AS CODICESPESA
+                , 0 AS PROPORZIONALE
+                , '' AS TIPODATO
+                , '' AS RIFTESTO
+                , 0 AS RIFNUMERO
+                , '' AS RIFDATA
+                FROM DO30_DOCCORPO WHERE 1=0
+                
+----------------------------------------------------------------------------------------------------------------
+-- BLOCCO DA DECOMMENTARE E ADATTARE PER INSERIRE IL RIFERIMENTO TARGA
+-- SOSTITUIRE IL CAMPO DO35_ALFPERS2 CON L'EFFETTIVO CAMPO UTILIZZATO DAL CAMPO PERSONALIZZATO DI CORPO
+-- N.B. DECOMMENTARE ALLO STESSO MODO ANCHE L'ANALOGO BLOCCO PIU IN ALTO
+----------------------------------------------------------------------------------------------------------------
+                --'** STUDIO 81 - DI FONZO - 25/02/2020 - SN
+                UNION
+            
+                SELECT 
+                2 AS ORDINE
+                ,'' AS CODICESPESA
+                , 0 AS PROPORZIONALE
+                , DO36_ALFST1 AS TIPODATO
+                , DO05_DESCRIZIONE AS RIFTESTO
+                , 0 AS RIFNUMERO
+                , '' AS RIFDATA
+                FROM DO30_DOCCORPO
+                INNER JOIN DO36_DOCCORPOEST ON DO30_DITTA_CG18 = DO36_DITTA_CG18 AND 
+                                               DO30_NUMREG_CO99 = DO36_NUMREG_CO99 AND 
+                                               DO30_PROGRIGA = DO36_PROGRIGA
+                                               inner join DO05_ANAGCAMPIPERS on DO05_CODICE = DO36_ALFST1
+                WHERE DO30_DITTA_CG18 =@DITTA 
+                    AND DO30_NUMREG_CO99 = @NUMREG 
+                    AND DO30_PROGRIGA = @PROGRIGA
+                    --AND ISNULL(DO30_INDTIPOOMAG,0) = 1
+                --'** STUDIO 81 - DI FONZO - 25/02/2020 - EN
+                
+--                UNION  
+                    
+--                SELECT 
+--                2 AS ORDINE
+--                , '' AS CODICESPESA
+--                , 0 AS PROPORZIONALE
+--                , 'TARGA' AS TIPODATO
+--                , DO35_ALFPERS2 AS RIFTESTO
+--                , 0 AS RIFNUMERO
+--                , '' AS RIFDATA
+--                FROM DO30_DOCCORPO
+--                INNER JOIN DO35_DOCCORPOPERS 
+--                    ON DO35_DITTA_CG18 = DO30_DITTA_CG18 
+--                    AND DO35_NUMREG_CO99 = DO30_NUMREG_CO99 
+--                    AND DO35_PROGRIGA = DO30_PROGRIGA
+--                    AND DO35_PROG = 1            
+--                WHERE DO30_DITTA_CG18 =@DITTA 
+--                    AND DO30_NUMREG_CO99 = @NUMREG 
+--                    AND DO30_PROGRIGA = @PROGRIGA
+--                    AND ISNULL(DO35_ALFPERS2,'')<>''
+
+----------------------------------------------------------------------------------------------------------------
+-- BLOCCO DA DECOMMENTARE E ADATTARE PER INSERIRE IL RIFERIMENTO ALLO SCONTRINO
+-- SOSTITUIRE IL CAMPO DO35_ALFPERS3 CON L'EFFETTIVO CAMPO UTILIZZATO DAL CAMPO PERSONALIZZATO DI CORPO
+-- N.B. DECOMMENTARE ALLO STESSO MODO ANCHE L'ANALOGO BLOCCO PIU IN ALTO
+----------------------------------------------------------------------------------------------------------------
+--                    
+--                UNION
+--
+--                SELECT 
+--                3 AS ORDINE
+--                , '' AS CODICESPESA
+--                , 0 AS PROPORZIONALE
+--                , 'SCONTRINO' AS TIPODATO
+--                , DO35_ALFPERS3 AS RIFTESTO
+--                , 0 AS RIFNUMERO
+--                , CONVERT(char(10), DO35_DATAPERS1, 126) AS RIFDATA
+--                FROM DO30_DOCCORPO
+--                INNER JOIN DO35_DOCCORPOPERS 
+--                    ON DO35_DITTA_CG18 = DO30_DITTA_CG18 
+--                    AND DO35_NUMREG_CO99 = DO30_NUMREG_CO99 
+--                    AND DO35_PROGRIGA = DO30_PROGRIGA
+--                    AND DO35_PROG = 1            
+--                WHERE DO30_DITTA_CG18 =@DITTA 
+--                    AND DO30_NUMREG_CO99 = @NUMREG 
+--                    AND DO30_PROGRIGA = @PROGRIGA
+--                    AND ISNULL(DO35_ALFPERS3,'')<>''
+--                    AND ISNULL(DO35_DATAPERS1,'')<>''                
+                    
+            END
